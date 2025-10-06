@@ -14,23 +14,23 @@ def run_annotation_for_extracted_features(
     output_csv_path: str | None = None,
 ) -> str:
     """
-    Annotate tiles using the tile embeddings produced by run_extract_features_for_tessellation.
+    Annotate tiles by comparing tile embeddings (from step 2) to class embeddings (step 3).
 
     Looks for:
         outputs/<slide>/<slide>_features.pt
 
     Writes:
-        outputs/<slide>/<slide>_annotations.csv  (unless output_csv_path is provided)
+        outputs/<slide>/<slide>_annotations.csv   (unless output_csv_path is provided)
 
     Args:
-        wsi_path: Path to the whole-slide image used earlier.
-        class_embedding_pt_path: Path to the class embeddings .pt.
-        classes: List of class names to score/assign.
-        base_output_dir: Root output dir (default: 'outputs').
-        output_csv_path: Optional override for output CSV path.
+        wsi_path: Path to the WSI used earlier.
+        class_embedding_pt_path: Path to the .pt from run_create_class_embeddings.
+        classes: Class names to score/assign.
+        base_output_dir: Root directory for outputs.
+        output_csv_path: Optional override for the annotations CSV.
 
     Returns:
-        str: Path to the created annotations CSV.
+        str: Path to the created annotations CSV file.
     """
     slide = Path(wsi_path)
     slide_name = slide.stem
@@ -60,7 +60,6 @@ def run_annotation_for_extracted_features(
         output_csv_path=str(out_csv),
     )
 
-    # Some builds expect OmegaConf; others accept the dataclass directly.
     try:
         mussel.cli.annotate.main(OmegaConf.create(cfg))
     except Exception:

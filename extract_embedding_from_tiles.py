@@ -10,7 +10,7 @@ def run_extract_features_for_tessellation(
     wsi_path: str,
     base_output_dir: str = "outputs",
     patch_h5_path: str | None = None,
-    model_type: str = "Virchow2",
+    model_type: str = "CLIP",
     batch_size: int = 128,
     use_gpu: bool = True,
     num_workers: int = 16,
@@ -62,7 +62,7 @@ def run_extract_features_for_tessellation(
         raise RuntimeError("Feature extraction failed: outputs not created.")
 
     print(f"[extract_features] Done → {features_h5}, {features_pt}")
-    return {
+    return { 
         "features_h5": str(features_h5),
         "features_pt": str(features_pt),
         "tiles_h5": str(patch_h5_path),
