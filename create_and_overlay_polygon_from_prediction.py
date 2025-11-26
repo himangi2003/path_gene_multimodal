@@ -354,17 +354,48 @@ def build_polygons_for_all_classes(
     return features
 
 
-def export_geojson(features: List[Dict], path: str) -> None:
-    """Write features (with 'geometry' + 'class') to a GeoJSON FeatureCollection."""
+
+
+def export_geojson(
+    features: List[Dict],
+    wsi_path: str,
+    base_output_dir: str,
+    output_pt_path: Optional[str] = None,) -> Path:
+    """
+    Write features (with 'geometry' + 'class') to a GeoJSON FeatureCollection.
+    Saves under base_output_dir/<slide_name>/<slide_name>.geojson by default.
+    Returns the full output path.
+    """
+    wsi = Path(wsi_path)
+    slide_name = wsi.stem
+
+    # Create slide-specific directory
+    outdir = Path(base_output_dir) / slide_name
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    # Use explicit path if given, else default name
+    out_path = Path(output_pt_path) if output_pt_path else (outdir / f"{slide_name}.geojson")
+
+    # Build FeatureCollection
     gj = {
         "type": "FeatureCollection",
         "features": [
-            {"type": "Feature", "properties": {k:v for k,v in f.items() if k != 'geometry'}, "geometry": f['geometry']}
+            {
+                "type": "Feature",
+                "properties": {k: v for k, v in f.items() if k != "geometry"},
+                "geometry": f["geometry"],
+            }
             for f in features
-        ]
+        ],
     }
-    with open(path, 'w') as f:
-        json.dump(gj, f)
+
+    # Write file
+    with open(out_path, "w") as f:
+        json.dump(gj, f, indent=2)
+
+    print(f"[✓] Saved GeoJSON ({len(features)} features) → {out_path}")
+    return out_path
+
 
 
 # ----------------------------

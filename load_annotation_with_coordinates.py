@@ -1,25 +1,44 @@
 import pandas as pd
 from typing import Optional
-import pandas as pd
 from pathlib import Path
-import pandas as pd
 import h5py
+from shapely.geometry import box
+from shapely.ops import unary_union
+
+# Class scores expected in the annotations CSV
+CLASSES = [
+    "Tumor epithelium",
+    "Tumor-associated stroma (desmoplastic stroma)",
+    "Vessel endothelium",
+    "Necrosis",
+    "Lymphoid aggregate / TLS",
+]
+
 
 def load_annotations_with_coords(
     wsi_path: str | Path,
-    classes: list[str],
+    classes: list[str] = CLASSES,
     base_output_dir: str | Path = "outputs",
     annotations_csv: Optional[str | Path] = None,
     tiles_h5_path: Optional[str | Path] = None,
     patches_dir: Optional[str | Path] = None,
+    save_merged: bool = True,
+    merged_csv_name: Optional[str] = None,
+    # TME ROI params
+    add_tme_roi: bool = True,
+    tumor_class: str = "Tumor epithelium",
+    patch_size: int = 508,
+    tme_margin_factor: float = 2.0,
 ) -> pd.DataFrame:
     """
-    Load annotation CSV and enrich with tile coordinates (and optional patch filenames).
+    Load annotation CSV and enrich with tile coordinates (and optional patch filenames),
+    compute predicted_class and optionally a TME-over-tumor flag column `in_tme_roi`,
+    then optionally save the merged dataframe to disk.
 
-    Assumes (by default):
+    Default expected layout:
       outputs/<slide>/<slide>_annotations.csv
       outputs/<slide>/<slide>.h5
-      outputs/<slide>/patches/   (if you enabled saving PNG patches)
+      outputs/<slide>/patches/   (if PNG patches were saved)
     """
     slide = Path(wsi_path)
     name = slide.stem
@@ -49,7 +68,7 @@ def load_annotations_with_coords(
     if "tile_index" not in df.columns:
         df = df.reset_index().rename(columns={"index": "tile_index"})
 
-    # Read coords from H5 (try multiple common layouts)
+    # -------- Read coords from H5 (try multiple common layouts) --------
     with h5py.File(tiles_h5_path, "r") as f:
         candidates = [
             ("coords", None),            # Nx2 or Nx3
@@ -100,17 +119,63 @@ def load_annotations_with_coords(
             meta["level"] = level
         df_coords = pd.DataFrame(meta)
 
-    # Join annotations with coords on tile_index
+    # -------- Join annotations with coords on tile_index --------
     df_merged = df.merge(df_coords, on="tile_index", how="left")
 
     # Optional: add PNG paths if patches were saved
     if patches_dir is not None:
-        df_merged["png_path"] = (df_merged["tile_index"].apply(lambda i: str(patches_dir / f"{i}.png")))
+        df_merged["png_path"] = df_merged["tile_index"].apply(
+            lambda i: str(patches_dir / f"{i}.png")
+        )
 
-    # Compute predicted class by argmax over the given class columns
+    # -------- Compute predicted class by argmax over class columns --------
     missing = [c for c in classes if c not in df_merged.columns]
     if missing:
         raise KeyError(f"Missing class score columns in annotations CSV: {missing}")
     df_merged["predicted_class"] = df_merged[classes].idxmax(axis=1)
+
+    # -------- Optionally mark TME tiles (adds in_tme_roi) --------
+    if add_tme_roi:
+        # check required columns
+        for col in ["x", "y", "tile_index", "predicted_class"]:
+            if col not in df_merged.columns:
+                raise KeyError(f"Column '{col}' is missing from merged dataframe.")
+
+        tme_classes = classes
+        tme_margin = patch_size * tme_margin_factor
+
+        def make_patch_poly(xv, yv, size=patch_size):
+            # (x, y) are TOP-LEFT coords of patch in WSI space
+            return box(xv, yv, xv + size, yv + size)
+
+        # tumor tiles
+        df_tumor = df_merged[df_merged["predicted_class"] == tumor_class]
+        if df_tumor.empty:
+            raise ValueError("No tumor tiles (Tumor epithelium) found.")
+
+        # all TME tiles (includes tumor class)
+        df_tme = df_merged[df_merged["predicted_class"].isin(tme_classes)]
+        if df_tme.empty:
+            raise ValueError("No TME tiles for the given classes found.")
+
+        # tumor union → buffer
+        tumor_polys = [make_patch_poly(r.x, r.y) for r in df_tumor.itertuples()]
+        tumor_buffer = unary_union(tumor_polys).buffer(tme_margin)
+
+        # TME tiles intersecting tumor buffer
+        tme_tile_indices = []
+        for r in df_tme.itertuples():
+            if make_patch_poly(r.x, r.y).intersects(tumor_buffer):
+                tme_tile_indices.append(r.tile_index)
+
+        df_merged["in_tme_roi"] = df_merged["tile_index"].isin(tme_tile_indices)
+
+    # -------- Save merged CSV (with in_tme_roi if computed) --------
+    if save_merged:
+        outdir.mkdir(parents=True, exist_ok=True)
+        if merged_csv_name is None:
+            merged_csv_name = f"{name}_annotations_with_coords.csv"
+        merged_path = outdir / merged_csv_name
+        df_merged.to_csv(merged_path, index=False)
 
     return df_merged

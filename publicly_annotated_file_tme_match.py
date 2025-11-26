@@ -156,3 +156,48 @@ def show_tiff_thumbnail(tif_path, size=None):
     plt.show()
 
 
+import os
+
+# Check current working directory
+print("Current directory:", os.getcwd())
+
+# Change directory
+os.chdir("/lab/deasylab3/")
+
+# Verify change
+print("New directory:", os.getcwd())
+
+
+data_path = 'Jung/tiger/wsibulk'
+annotations = 'Jung/tiger/wsibulk/annotations-tumor-bulk'
+images =  'Jung/tiger/wsibulk/images'
+xmls = 'Jung/tiger/wsibulk/annotations-tumor-bulk/xmls'
+
+annotation_files = os.listdir(annotations)
+image_files = os.listdir(images)
+xmls_files = os.listdir(xmls)
+
+imgs_names = os.listdir(images)
+imgs_names.sort()
+xmls_names = os.listdir(xmls)
+xmls_names.sort()
+
+
+
+tif = image_files[2]
+wsi_path = os.path.join(images, tif)
+base = base_no_ext(tif)
+
+# Find matching XML by base name
+xml_candidates = [x for x in os.listdir(xmls)
+                  if x.lower().endswith(".xml") and base_no_ext(x) == base]
+xml_path = os.path.join(xmls, xml_candidates[0])
+
+show_tiff_thumbnail(wsi_path)
+
+out = "/cluster/home/srivash/venvs/Mussel/path_gene_multimodal"
+out_dir = os.path.join(out, "_csv_out")
+os.makedirs(out_dir, exist_ok=True)
+
+
+
