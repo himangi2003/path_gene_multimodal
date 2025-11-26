@@ -462,12 +462,41 @@ def scale_geometry_to_thumb(geom_dict, scale_x, scale_y):
 
 
 # ---- 3) Draw overlays for all classes on the same thumbnail ----
-def plot_overlays_all_classes(thumb, features, class_colors=None, alpha=0.35, linewidth=1.0):
+from pathlib import Path
+from collections import defaultdict
+
+import matplotlib.pyplot as plt
+from shapely.geometry import shape, Polygon, MultiPolygon
+
+
+# ----------------------------------------------------------------------
+# ALL-CLASSES OVERLAY
+# ----------------------------------------------------------------------
+def plot_overlays_all_classes(
+    thumb,
+    features,
+    wsi_path,
+    base_output_dir,
+    class_colors=None,
+    alpha=0.35,
+    linewidth=1.0,
+    show=False,          # <-- NEW: optional display toggle
+):
     """
-    features: list of dicts with keys {'class', 'geometry', ...}
-              geometry is GeoJSON-like (as returned by export_geojson or your pipeline)
-    class_colors: optional dict {class_name: color}
+    Saves overlay as:
+        base_output_dir/<slide_name>/<slide_name>_all_classes_overlay.png
+
+    If show=True, also displays the figure.
     """
+    # ---- set up output directory ----
+    wsi = Path(wsi_path)
+    slide_name = wsi.stem
+
+    outdir = Path(base_output_dir) / slide_name
+    outdir.mkdir(parents=True, exist_ok=True)
+    out_path = outdir / f"{slide_name}_all_classes_overlay.png"
+
+    # ---- plotting ----
     plt.figure(figsize=(8, 8))
     plt.imshow(thumb)
     ax = plt.gca()
@@ -476,71 +505,130 @@ def plot_overlays_all_classes(thumb, features, class_colors=None, alpha=0.35, li
     # default color palette if not provided
     if class_colors is None:
         default_palette = [
-            "#d62728","#1f77b4","#2ca02c","#9467bd","#8c564b",
-            "#e377c2","#7f7f7f","#bcbd22","#17becf","#ff7f0e"
+            "#d62728", "#1f77b4", "#2ca02c", "#9467bd", "#8c564b",
+            "#e377c2", "#7f7f7f", "#bcbd22", "#17becf", "#ff7f0e"
         ]
         classes_seen = sorted({f["class"] for f in features})
-        class_colors = {c: default_palette[i % len(default_palette)] for i, c in enumerate(classes_seen)}
+        class_colors = {
+            c: default_palette[i % len(default_palette)]
+            for i, c in enumerate(classes_seen)
+        }
 
-    # group polygons by class
+    # group by class
     by_class = defaultdict(list)
     for f in features:
         by_class[f["class"]].append(f["geometry"])
 
-    # draw filled overlays + edges
+    # draw overlays
     handles = []
     labels = []
     for cls, geoms in by_class.items():
         color = class_colors.get(cls, "#ff00ff")
+
         for gd in geoms:
-            g = shape(gd)  # already in thumbnail space if you scaled earlier
+            g = shape(gd)
             if isinstance(g, Polygon):
-                ax.fill(*g.exterior.xy, facecolor=color, alpha=alpha, edgecolor=color, linewidth=linewidth)
+                ax.fill(*g.exterior.xy, facecolor=color, edgecolor=color,
+                        alpha=alpha, linewidth=linewidth)
                 for ring in g.interiors:
                     ax.plot(*ring.xy, color=color, linewidth=linewidth)
+
             elif isinstance(g, MultiPolygon):
                 for p in g.geoms:
-                    ax.fill(*p.exterior.xy, facecolor=color, alpha=alpha, edgecolor=color, linewidth=linewidth)
+                    ax.fill(*p.exterior.xy, facecolor=color, edgecolor=color,
+                            alpha=alpha, linewidth=linewidth)
                     for ring in p.interiors:
                         ax.plot(*ring.xy, color=color, linewidth=linewidth)
 
-        # for legend
-        handles.append(plt.Line2D([0],[0], color=color, lw=6, alpha=alpha))
+        # legend handle
+        handles.append(plt.Line2D([0], [0], color=color, lw=6, alpha=alpha))
         labels.append(cls)
 
     ax.legend(handles, labels, loc="lower right", frameon=True, fontsize=9)
     plt.tight_layout()
-    plt.show()
+
+    # ---- save ----
+    plt.savefig(out_path, dpi=200, bbox_inches="tight")
+
+    # ---- show option ----
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+    print(f"[✓] Saved all-classes overlay → {out_path}")
+    return out_path
 
 
-# ---- 4) Draw one class per image (quick browsing/export) ----
-def plot_overlays_per_class(thumb, features, out_dir=None, alpha=0.35, linewidth=1.0):
+# ----------------------------------------------------------------------
+# PER-CLASS OVERLAYS
+# ----------------------------------------------------------------------
+def plot_overlays_per_class(
+    thumb,
+    features,
+    wsi_path,
+    base_output_dir,
+    alpha=0.35,
+    linewidth=1.0,
+    show=False,          # <-- NEW
+):
+    """
+    Saves one PNG per class to:
+        base_output_dir/<slide_name>/<class>.png
+
+    If show=True, displays each figure instead of closing it.
+    """
+    wsi = Path(wsi_path)
+    slide_name = wsi.stem
+
+    outdir = Path(base_output_dir) / slide_name
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    saved_paths = []
+
     by_class = defaultdict(list)
     for f in features:
         by_class[f["class"]].append(f["geometry"])
 
+    # loop each class
     for cls, geoms in by_class.items():
         plt.figure(figsize=(8, 8))
         plt.imshow(thumb)
         ax = plt.gca()
         ax.set_axis_off()
+
         for gd in geoms:
             g = shape(gd)
+
             if isinstance(g, Polygon):
-                ax.fill(*g.exterior.xy, facecolor="#ff0000", alpha=alpha, edgecolor="#ff0000", linewidth=linewidth)
+                ax.fill(*g.exterior.xy, facecolor="#ff0000", edgecolor="#ff0000",
+                        alpha=alpha, linewidth=linewidth)
                 for ring in g.interiors:
                     ax.plot(*ring.xy, color="#ff0000", linewidth=linewidth)
+
             elif isinstance(g, MultiPolygon):
                 for p in g.geoms:
-                    ax.fill(*p.exterior.xy, facecolor="#ff0000", alpha=alpha, edgecolor="#ff0000", linewidth=linewidth)
+                    ax.fill(*p.exterior.xy, facecolor="#ff0000", edgecolor="#ff0000",
+                            alpha=alpha, linewidth=linewidth)
                     for ring in p.interiors:
                         ax.plot(*ring.xy, color="#ff0000", linewidth=linewidth)
+
         plt.title(cls)
         plt.tight_layout()
-        if out_dir:
-            import os
-            os.makedirs(out_dir, exist_ok=True)
-            plt.savefig(f"{out_dir}/{cls.replace('/','_')}.png", dpi=200, bbox_inches="tight")
-            plt.close()
-        else:
+
+        # clean filename
+        cls_safe = cls.replace("/", "_")
+        out_path = outdir / f"{cls_safe}.png"
+        plt.savefig(out_path, dpi=200, bbox_inches="tight")
+
+        # ---- show or close ----
+        if show:
             plt.show()
+        else:
+            plt.close()
+
+        print(f"[✓] Saved overlay for class '{cls}' → {out_path}")
+        saved_paths.append(out_path)
+
+    print(f"[✓] Last per-class overlay saved → {saved_paths[-1]}")
+    return saved_paths
