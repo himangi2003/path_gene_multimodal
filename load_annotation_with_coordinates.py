@@ -124,9 +124,9 @@ def load_annotations_with_coords(
 
     # Optional: add PNG paths if patches were saved
     if patches_dir is not None:
-        df_merged["png_path"] = df_merged["tile_index"].apply(
-            lambda i: str(patches_dir / f"{i}.png")
-        )
+        df_merged["png_path"] = df_merged.apply(
+            lambda r: str(patches_dir / f"{int(r.x)}_{int(r.y)}.png"),axis=1)
+
 
     # -------- Compute predicted class by argmax over class columns --------
     missing = [c for c in classes if c not in df_merged.columns]
