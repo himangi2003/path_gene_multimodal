@@ -45,7 +45,9 @@ source .venv/bin/activate
 pip install jupyterlab ipykernel
 
 python -m ipykernel install --user --name mussel --display-name "Python (Mussel)"
-Use the Mussel kernel in JupyterLab
+#Use the Mussel kernel in JupyterLab
+
+```bash
 
 ### 1️⃣ Tissue Segmentation & Tiling — *Mussel*
 We use **Mussel** for initial WSI tissue segmentation and tile extraction:
