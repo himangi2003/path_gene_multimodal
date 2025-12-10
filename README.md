@@ -4,6 +4,49 @@ This project implements a complete **Whole Slide Image (WSI) spatial analysis pi
 
 ---
 
+### 0️⃣ Pre-step: Create a Mussel environment & JupyterLab kernel
+
+Before running tissue segmentation & tiling with **Mussel**, set up a dedicated Python environment managed by **uv** and expose it as a JupyterLab kernel.
+
+---
+
+#### 0.1 Install uv (once)
+
+On macOS or Linux:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+#### 0.2 Clone the Mussel repository
+
+git clone https://github.com/pathology-data-mining/Mussel.git
+cd Mussel
+
+#### 0.3 Create the Mussel environment with uv
+
+# PyTorch + GPU (NVIDIA CUDA)
+uv sync --extra torch-gpu
+
+# OR PyTorch + CPU only
+# uv sync --extra torch-cpu
+
+# OR TensorFlow + GPU
+# uv sync --extra tensorflow-gpu
+
+# OR TensorFlow + CPU
+# uv sync --extra tensorflow-cpu
+
+
+#### 0.3 Activate the Mussel environment
+source .venv/bin/activate
+
+
+#### 0.5 Install JupyterLab and register the Mussel kernel(optional if you are using jupyter lab)
+pip install jupyterlab ipykernel
+
+python -m ipykernel install --user --name mussel --display-name "Python (Mussel)"
+Use the Mussel kernel in JupyterLab
+
 ### 1️⃣ Tissue Segmentation & Tiling — *Mussel*
 We use **Mussel** for initial WSI tissue segmentation and tile extraction:
 
