@@ -1,0 +1,10 @@
+python - <<'PY'
+import tnbc_config as cfg
+from pathlib import Path
+
+wsis = [p for p in cfg.DATA_PATH.rglob("*") if p.is_file() and p.suffix.lower() in cfg.WSI_EXTS]
+wsis = sorted(wsis)
+
+Path("wsi_list.txt").write_text("\n".join(map(str, wsis)) + "\n")
+print("Wrote", len(wsis), "WSIs to wsi_list.txt")
+PY
