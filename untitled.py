@@ -1,221 +1,112 @@
-import json
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+tumor_classes = [
+     "Invasive tumor epithelium (TNBC) or In situ carcinoma (DCIS / LCIS)",
+]
 
-import matplotlib.pyplot as plt
-from matplotlib.patches import Polygon as MplPolygon
+til_classes = [
+    "Lymphocyte-rich stroma / TILs",
+]
 
-from shapely.geometry import shape, mapping
-from shapely.affinity import scale as shapely_scale
+tls_classes = [
+    "Lymphoid aggregate / TLS",
+]
 
-from tiffslide import TiffSlide
-from PIL import Image
+data_path = Path(data_path)
+out_dir = Path(out_dir)
 
+image_files = sorted(data_path.iterdir())
 
-# ----------------------------------------------------------------------
-# 1. Export GeoJSON
-# ----------------------------------------------------------------------
-def export_geojson(
-    features: List[Dict],
-    wsi_path: str,
-    base_output_dir: str,
-    output_pt_path: Optional[str] = None,
-) -> Path:
-    """
-    Write features (with 'geometry' + other properties like 'class')
-    to a GeoJSON FeatureCollection.
+wsi_path = image_files[21]
 
-    Default path:
-        base_output_dir/<slide_name>/<slide_name>.geojson
+slide_id = wsi_path.stem
+slide_out_dir = out_dir / slide_id
+slide_out_dir.mkdir(parents=True, exist_ok=True)
+slide_out_dir = out_dir / name
+geojson_path = slide_out_dir / f"{name}.geojson"
 
-    Returns:
-        Path to saved GeoJSON file.
-    """
-    wsi = Path(wsi_path)
-    slide_name = wsi.stem
+print("WSI path:", wsi_path)
+print("GeoJSON path:", geojson_path)
+csv_path = slide_out_dir / f"{slide_id}_islands.csv"
 
-    # Slide-specific directory
-    outdir = Path(base_output_dir) / slide_name
-    outdir.mkdir(parents=True, exist_ok=True)
+df = process_one_slide_make_csv_and_plot(
+    slide_id=slide_id,
+    wsi_path=wsi_path,
+    geojson_path=geojson_path,
+    tumor_classes=tumor_classes,
+    til_classes=til_classes,
+    tls_classes=tls_classes,   # <-- separate TLS
+    out_csv_path=csv_path,
+    thumb_size=(1024, 1024),   # faster for batch
+    do_plot=True,
+)
 
-    # Explicit path or default
-    out_path = Path(output_pt_path) if output_pt_path else (outdir / f"{slide_name}.geojson")
+from datetime import datetime
 
-    gj = {
-        "type": "FeatureCollection",
-        "features": [
-            {
-                "type": "Feature",
-                "properties": {k: v for k, v in f.items() if k != "geometry"},
-                "geometry": f["geometry"],
-            }
-            for f in features
-        ],
-    }
-
-    with open(out_path, "w") as f:
-        json.dump(gj, f, indent=2)
-
-    print(f"[✓] Saved GeoJSON ({len(features)} features) → {out_path}")
-    return out_path
-
-
-# ----------------------------------------------------------------------
-# 2. Load TIFF WSI thumbnail with tiffslide
-# ----------------------------------------------------------------------
-def load_tiff_thumbnail(
-    wsi_path: str | Path,
-    size: Tuple[int, int] = (2000, 2000),
-) -> Tuple[Image.Image, float, float, TiffSlide]:
-    """
-    Load a TIFF WSI using tiffslide and return:
-        - thumb: PIL.Image thumbnail
-        - sx: scale factor in x (thumb / level-0)
-        - sy: scale factor in y (thumb / level-0)
-        - slide: TiffSlide object
-    """
-    wsi_path = Path(wsi_path)
-    slide = TiffSlide(str(wsi_path))
-
-    level0_w, level0_h = slide.dimensions  # (width, height)
-    # tiffslide implements a .get_thumbnail(size) similar to OpenSlide
-    thumb = slide.get_thumbnail(size)
-
-    thumb_w, thumb_h = thumb.size
-    sx = thumb_w / level0_w
-    sy = thumb_h / level0_h
-
-    return thumb, sx, sy, slide
-
-
-# ----------------------------------------------------------------------
-# 3. Scale geometry from level-0 coords to thumbnail coords
-# ----------------------------------------------------------------------
-def scale_geometry_to_thumb(geom: Dict, sx: float, sy: float):
-    """
-    Scale a GeoJSON-like geometry from level-0 pixel coords into
-    thumbnail coords, using sx, sy.
-    Returns a Shapely geometry in thumbnail space.
-    """
-    g = shape(geom)
-    g_scaled = shapely_scale(g, xfact=sx, yfact=sy, origin=(0, 0))
-    return g_scaled
-
-
-# ----------------------------------------------------------------------
-# 4. Overlay ALL classes at once (for viewing only)
-# ----------------------------------------------------------------------
-def plot_overlays_all_classes(
-    thumb: Image.Image,
-    features_thumb: List[Dict],
-    alpha: float = 0.4,
+def write_basic_size_burden_metrics_txt(
+    df_islands,
+    slide_id,
+    out_txt_path,
 ):
     """
-    Show thumbnail with all class polygons overlaid.
-    Does NOT save any files; purely for interactive viewing.
+    Appends BASIC SIZE & BURDEN METRICS to a per-slide TXT file.
+    Safe to call multiple times as you add more metric blocks later.
     """
-    fig, ax = plt.subplots()
-    ax.imshow(thumb)
-    ax.axis("off")
 
-    for f in features_thumb:
-        geom = shape(f["geometry"])
+    # ---- compute metrics ----
+    tissue_area = float(df_islands["tissue_area_px2"].iloc[0])
 
-        if geom.geom_type == "Polygon":
-            polys = [geom]
-        elif geom.geom_type == "MultiPolygon":
-            polys = list(geom.geoms)
-        else:
-            continue
+    def sum_area(typ):
+        sub = df_islands[df_islands["type"] == typ]
+        return float(sub["area_px2"].sum()) if not sub.empty else 0.0
 
-        for poly in polys:
-            x, y = poly.exterior.xy
-            patch = MplPolygon(
-                list(zip(x, y)),
-                closed=True,
-                fill=True,
-                alpha=alpha,
-            )
-            ax.add_patch(patch)
+    tumor_area = sum_area("tumor")
+    til_area   = sum_area("til")
+    tls_area   = sum_area("tls")
+    immune_area = til_area + tls_area
 
-    plt.tight_layout()
-    plt.show()
+    tumor_frac  = tumor_area / tissue_area if tissue_area > 0 else None
+    til_frac    = til_area / tissue_area if tissue_area > 0 else None
+    tls_frac    = tls_area / tissue_area if tissue_area > 0 else None
+    immune_frac = immune_area / tissue_area if tissue_area > 0 else None
 
+    denom = tumor_area + immune_area
+    immune_dom = immune_area / denom if denom > 0 else None
 
-# ----------------------------------------------------------------------
-# 5. Overlay PER class → save PNGs
-# ----------------------------------------------------------------------
-def sanitize_for_filename(s: str) -> str:
-    """Make class names safe for filenames."""
-    return (
-        s.replace(" ", "_")
-        .replace("/", "_")
-        .replace("\\", "_")
-        .replace("(", "")
-        .replace(")", "")
-        .replace(",", "")
-    )
+    # ---- write block ----
+    with open(out_txt_path, "a") as f:
+        f.write("\n")
+        f.write("=" * 60 + "\n")
+        f.write("I. BASIC SIZE & BURDEN METRICS\n")
+        f.write("=" * 60 + "\n")
+        f.write(f"Slide ID: {slide_id}\n")
+        f.write(f"Timestamp: {datetime.now().isoformat(timespec='seconds')}\n\n")
 
+        f.write(f"Tissue area (px^2):        {tissue_area:.3e}\n")
+        f.write(f"Tumor area (px^2):         {tumor_area:.3e}\n")
+        f.write(f"TIL area (px^2):           {til_area:.3e}\n")
+        f.write(f"TLS area (px^2):           {tls_area:.3e}\n")
+        f.write(f"Immune area (px^2):        {immune_area:.3e}\n\n")
 
-def plot_overlays_per_class(
-    thumb: Image.Image,
-    features_thumb: List[Dict],
-    out_dir: str | Path,
-    alpha: float = 0.4,
-) -> List[Path]:
-    """
-    For each unique 'class' in features_thumb, save a PNG overlay:
+        f.write(f"Tumor / tissue fraction:   {tumor_frac:.4f}\n" if tumor_frac is not None else "")
+        f.write(f"TIL / tissue fraction:     {til_frac:.4f}\n" if til_frac is not None else "")
+        f.write(f"TLS / tissue fraction:     {tls_frac:.4f}\n" if tls_frac is not None else "")
+        f.write(f"Immune / tissue fraction:  {immune_frac:.4f}\n" if immune_frac is not None else "")
+        f.write("\n")
 
-        <out_dir>/<class>_overlay.png
+        f.write(
+            f"Immune dominance index\n"
+            f"(immune / (tumor + immune)): {immune_dom:.4f}\n"
+            if immune_dom is not None else
+            "Immune dominance index: NA\n"
+        )
 
-    Returns:
-        List of Paths to saved overlays.
-        The *last* overlay is saved_paths[-1].
-    """
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+        f.write("\n")
 
-    classes = sorted({f["class"] for f in features_thumb})
-    saved_paths: List[Path] = []
+# ---- WRITE TXT METRICS ----
+metrics_txt_path = slide_out_dir / f"{slide_id}_metrics.txt"
 
-    for cls in classes:
-        fig, ax = plt.subplots()
-        ax.imshow(thumb)
-        ax.axis("off")
-
-        for f in features_thumb:
-            if f["class"] != cls:
-                continue
-
-            geom = shape(f["geometry"])
-            if geom.geom_type == "Polygon":
-                polys = [geom]
-            elif geom.geom_type == "MultiPolygon":
-                polys = list(geom.geoms)
-            else:
-                continue
-
-            for poly in polys:
-                x, y = poly.exterior.xy
-                patch = MplPolygon(
-                    list(zip(x, y)),
-                    closed=True,
-                    fill=True,
-                    alpha=alpha,
-                )
-                ax.add_patch(patch)
-
-        plt.tight_layout()
-        cls_clean = sanitize_for_filename(str(cls))
-        out_path = out_dir / f"{cls_clean}_overlay.png"
-        fig.savefig(out_path, dpi=150, bbox_inches="tight")
-        plt.close(fig)
-
-        print(f"[✓] Saved overlay for class '{cls}' → {out_path}")
-        saved_paths.append(out_path)
-
-    if saved_paths:
-        print(f"[✓] Last overlay saved: {saved_paths[-1]}")
-
-    return saved_paths
-
+write_basic_size_burden_metrics_txt(
+    df_islands=df,
+    slide_id=slide_id,
+    out_txt_path=metrics_txt_path,
+)

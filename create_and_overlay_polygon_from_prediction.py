@@ -632,3 +632,32 @@ def plot_overlays_per_class(
 
     print(f"[✓] Last per-class overlay saved → {saved_paths[-1]}")
     return saved_paths
+
+
+def show_tiff_thumbnail(tif_path, size=None):
+    """
+    Display a thumbnail of a TIF whole-slide image using tiffslide.
+    
+    Parameters:
+        tif_path (str): Path to the .tif file
+        size (tuple or None): (width, height) for a fixed-size thumbnail.
+                              If None, smallest slide level is used.
+    """
+    slide = tiffslide.TiffSlide(tif_path)
+
+    if size is None:
+        # Use smallest resolution level
+        level = slide.level_count - 1
+        thumb = slide.read_region(
+            location=(0, 0),
+            level=level,
+            size=slide.level_dimensions[level]
+        )
+    else:
+        # Use tiffslide's built-in thumbnail scaler
+        thumb = slide.get_thumbnail(size=size)
+
+    plt.figure(figsize=(12, 12))
+    plt.imshow(thumb)
+    plt.axis("off")
+    plt.show()

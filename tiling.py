@@ -5,7 +5,7 @@ from omegaconf import OmegaConf
 import mussel.cli.tessellate
 from mussel.cli.tessellate import TessellateConfig, SegConfig
 
-def run_tessellation(wsi_path: str, base_output_dir: str = "outputs", workers: int = 4):
+def run_tessellation(wsi_path: str, Patch_size: int = None,  base_output_dir: str = "outputs", workers: int = 4):
     """
     Run Mussel tiling on a WSI removing all the background and save results in an output folder
     named after the WSI file.
@@ -25,7 +25,8 @@ def run_tessellation(wsi_path: str, base_output_dir: str = "outputs", workers: i
 
     output_h5_path = outdir / f"{slide_name}.h5"
 
-    seg_config = SegConfig(use_otsu = True,
+    seg_config = SegConfig(patch_size = Patch_size,
+                           use_otsu = True,
                             segment_threshold=20)
 
     cfg = TessellateConfig(

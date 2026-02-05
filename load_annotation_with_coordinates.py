@@ -5,19 +5,11 @@ import h5py
 from shapely.geometry import box
 from shapely.ops import unary_union
 
-# Class scores expected in the annotations CSV
-CLASSES = [
-    "Tumor epithelium",
-    "Tumor-associated stroma (desmoplastic stroma)",
-    "Vessel endothelium",
-    "Necrosis",
-    "Lymphoid aggregate / TLS",
-]
-
 
 def load_annotations_with_coords(
     wsi_path: str | Path,
-    classes: list[str] = CLASSES,
+    classes: list[str],
+    tumor_classes: list[str],
     base_output_dir: str | Path = "outputs",
     annotations_csv: Optional[str | Path] = None,
     tiles_h5_path: Optional[str | Path] = None,
@@ -26,7 +18,6 @@ def load_annotations_with_coords(
     merged_csv_name: Optional[str] = None,
     # TME ROI params
     add_tme_roi: bool = True,
-    tumor_class: str = "Tumor epithelium",
     patch_size: int = 508,
     tme_margin_factor: float = 2.0,
 ) -> pd.DataFrame:
@@ -35,10 +26,69 @@ def load_annotations_with_coords(
     compute predicted_class and optionally a TME-over-tumor flag column `in_tme_roi`,
     then optionally save the merged dataframe to disk.
 
-    Default expected layout:
-      outputs/<slide>/<slide>_annotations.csv
-      outputs/<slide>/<slide>.h5
-      outputs/<slide>/patches/   (if PNG patches were saved)
+    Args:
+        wsi_path (str | pathlib.Path):
+            Path to the whole-slide image (WSI). Only the stem (slide name) is
+            used to infer default output locations.
+        classes (list[str]):
+            List of class column names in the annotations CSV. Each column should
+            contain a score/probability per tile. Used to compute `predicted_class`
+            via argmax across these columns.
+        tumor_classes (list[str]):
+            Subset of `classes` that should be considered tumor classes when building
+            the tumor mask used for the TME ROI (e.g. ["Tumor epithelium"]).
+        base_output_dir (str | pathlib.Path, optional):
+            Base directory in which per-slide outputs are stored. Defaults to "outputs".
+        annotations_csv (str | pathlib.Path | None, optional):
+            Path to the annotations CSV. If None, this is assumed to be:
+                <base_output_dir>/<slide>/<slide>_annotations.csv
+            where <slide> is the stem of `wsi_path`.
+        tiles_h5_path (str | pathlib.Path | None, optional):
+            Path to the HDF5 file containing tile coordinates. If None, this is:
+                <base_output_dir>/<slide>/<slide>.h5
+        patches_dir (str | pathlib.Path | None, optional):
+            Directory containing PNG patches. If None, this is assumed to be:
+                <base_output_dir>/<slide>/patches
+            If that directory does not exist, no `png_path` column is added.
+        save_merged (bool, optional):
+            If True, save the merged DataFrame (annotations + coordinates and
+            optional TME ROI) as a CSV file. Defaults to True.
+        merged_csv_name (str | None, optional):
+            Filename for the merged CSV. If None, defaults to:
+                <slide>_annotations_with_coords.csv
+            under <base_output_dir>/<slide>/.
+        add_tme_roi (bool, optional):
+            If True, compute TME region-of-interest and add a boolean
+            column `in_tme_roi`. Defaults to True.
+        patch_size (int, optional):
+            Size (in WSI coordinate units, typically pixels) of each tile/patch.
+            Used to build square polygons for spatial operations. Defaults to 508.
+        tme_margin_factor (float, optional):
+            Factor multiplied by `patch_size` to obtain the buffer distance
+            around the union of tumor tiles when defining the TME ROI.
+            For example, 2.0 means a margin of 2 * patch_size. Defaults to 2.0.
+
+    Returns:
+        pandas.DataFrame:
+            DataFrame containing:
+                - original annotation columns,
+                - tile_index,
+                - x, y (tile top-left coordinates),
+                - optional `level` (if available in H5),
+                - optional `png_path` (if patches_dir is present),
+                - `predicted_class` (argmax over `classes`),
+                - optional `in_tme_roi` (bool) if `add_tme_roi` is True.
+
+    Raises:
+        FileNotFoundError:
+            If the annotations CSV or HDF5 tiles file cannot be found.
+        KeyError:
+            If required columns or any of the specified class columns are missing.
+        RuntimeError:
+            If no coordinate datasets can be located within the HDF5 file.
+        ValueError:
+            If no tumor tiles are found for the specified `tumor_classes`,
+            or no TME tiles are found for the given `classes`.
     """
     slide = Path(wsi_path)
     name = slide.stem
@@ -125,8 +175,9 @@ def load_annotations_with_coords(
     # Optional: add PNG paths if patches were saved
     if patches_dir is not None:
         df_merged["png_path"] = df_merged.apply(
-            lambda r: str(patches_dir / f"{int(r.x)}_{int(r.y)}.png"),axis=1)
-
+            lambda r: str(patches_dir / f"{int(r.x)}_{int(r.y)}.png"),
+            axis=1,
+        )
 
     # -------- Compute predicted class by argmax over class columns --------
     missing = [c for c in classes if c not in df_merged.columns]
@@ -149,9 +200,9 @@ def load_annotations_with_coords(
             return box(xv, yv, xv + size, yv + size)
 
         # tumor tiles
-        df_tumor = df_merged[df_merged["predicted_class"] == tumor_class]
+        df_tumor = df_merged[df_merged["predicted_class"].isin(tumor_classes)]
         if df_tumor.empty:
-            raise ValueError("No tumor tiles (Tumor epithelium) found.")
+            raise ValueError(f"No tumor tiles found for tumor classes: {tumor_classes}")
 
         # all TME tiles (includes tumor class)
         df_tme = df_merged[df_merged["predicted_class"].isin(tme_classes)]
